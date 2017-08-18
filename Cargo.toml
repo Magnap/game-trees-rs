@@ -1,0 +1,6 @@
+[package]
+name = "game-trees"
+version = "0.1.0"
+authors = ["Marcus Medom Ryding <mrok4a@gmail.com>"]
+
+[dependencies]
