@@ -1,6 +1,15 @@
 [package]
+authors = ["Marcus Medom Ryding <mrok4a@gmail.com>"]
 name = "game-trees"
 version = "0.1.0"
-authors = ["Marcus Medom Ryding <mrok4a@gmail.com>"]
+
+[[bin]]
+doc = false
+name = "game-trees"
 
 [dependencies]
+fnv = "1.0.5"
+rand = "0.3.16"
+
+[features]
+debug = []
