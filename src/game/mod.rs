@@ -1,3 +1,5 @@
+pub mod nim;
+
 use std::collections::HashMap;
 use std::hash::Hash;
 #[cfg(feature = "debug")]
@@ -8,19 +10,19 @@ pub type ScoreBoard<G: Game> = HashMap<G::Player, Score>;
 
 pub trait Game {
     #[cfg(feature = "debug")]
-    type Move: Eq + Hash + Clone + Debug;
+    type Move: Eq + Hash + Clone + Sync + Send + Debug;
     #[cfg(not(feature = "debug"))]
-    type Move: Eq + Hash + Clone;
+    type Move: Eq + Hash + Clone + Sync + Send;
 
     #[cfg(feature = "debug")]
-    type State: Eq + Hash + Clone + Debug;
+    type State: Eq + Hash + Clone + Sync + Send + Debug;
     #[cfg(not(feature = "debug"))]
-    type State: Eq + Hash + Clone;
+    type State: Eq + Hash + Clone + Sync + Send;
 
     #[cfg(feature = "debug")]
-    type Player: Eq + Hash + Debug;
+    type Player: Eq + Hash + Sync + Send + Debug;
     #[cfg(not(feature = "debug"))]
-    type Player: Eq + Hash;
+    type Player: Eq + Hash + Sync + Send;
 
     fn new() -> Self::State;
     fn apply(&mut Self::State, Self::Move);

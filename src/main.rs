@@ -1,59 +1,18 @@
 extern crate game_trees;
+extern crate chashmap;
 
-use game_trees::game::*;
+use game_trees::game::Game;
+use game_trees::game::nim::Nim;
 use game_trees::mcts_hashtable;
-use std::collections::HashMap;
 
 use std::error::Error;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::io;
+use std::io::Write;
+use std::time::Duration;
 
 #[cfg_attr(feature = "debug", derive(Debug))]
-struct Nim;
-
-impl Game for Nim {
-    type Move = u8;
-    type State = (u8, bool);
-    type Player = bool;
-
-    fn new() -> Self::State {
-        (0, false)
-    }
-
-    fn apply(s: &mut Self::State, m: Self::Move) {
-        s.0 += m;
-        s.1 = !s.1;
-    }
-
-    fn players() -> Vec<Self::Player> {
-        vec![false, true]
-    }
-
-    fn current_player(s: &Self::State) -> Self::Player {
-        s.1
-    }
-
-    fn legal_moves(s: &Self::State) -> Vec<Self::Move> {
-        (1..(std::cmp::min(10, 100 - s.0) + 1)).collect()
-    }
-
-    fn points(s: &Self::State) -> Option<HashMap<Self::Player, Score>> {
-        if Self::finished(s) {
-            let mut m = HashMap::new();
-            let p = s.1;
-            m.insert(p, if s.0 == 100 { -1.0 } else { -5.0 });
-            m.insert(!p, if s.0 == 100 { 1.0 } else { -5.0 });
-            Some(m)
-        } else {
-            None
-        }
-    }
-
-    fn finished(s: &Self::State) -> bool {
-        s.0 >= 100
-    }
-}
 
 fn main() {
     if let Err(e) = run() {
@@ -62,25 +21,31 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<Error>> {
-    let gt = Arc::new(RwLock::new(mcts_hashtable::MctsTable::<Nim>::new()));
-    let s = Arc::new(RwLock::new(<Nim as Game>::new()));
-    {
+    let gt = Arc::new(mcts_hashtable::MctsTable::<Nim>::new());
+    let mut s = <Nim as Game>::new();
+    let s_ref = Arc::new(Mutex::new(s));
+    for _ in 0..2 {
         let gt = gt.clone();
-        let s = s.clone();
+        let s_ref = s_ref.clone();
+        let mut s = s;
         thread::spawn(move || loop {
-            let s = s.read().unwrap();
-            let mut gt = gt.write().unwrap();
+            {
+                let s_locked = s_ref.lock().unwrap();
+                if *s_locked != s {
+                    s = *s_locked;
+                }
+            }
             for _ in 0..100 {
-                gt.playout(&s)
+                gt.playout(&s);
             }
         });
     }
-    println!("Let's play the 100 game. You go first:");
+    println!("Let's play the 100 game. You go first.");
     let mut buf = String::new();
     loop {
         let m: <Nim as Game>::Move;
         loop {
-            let s = s.read().unwrap();
+            println!("What's your move?");
             buf.clear();
             io::stdin().read_line(&mut buf)?;
             let m_opt = buf.trim().parse()?;
@@ -91,23 +56,42 @@ fn run() -> Result<(), Box<Error>> {
                 println!("That's not a legal move. Please try again:");
             }
         }
+        <Nim as Game>::apply(&mut s, m);
+        println!("The state is now {}", s.0);
+        if <Nim as Game>::finished(&s) {
+            println!("Looks like you won. Congratulations!");
+            break;
+        }
         {
-            let mut s = s.write().unwrap();
-            <Nim as Game>::apply(&mut s, m);
-            println!("The state is now {}", s.0);
-            if <Nim as Game>::finished(&*s) {
-                println!("Looks like you won. Congratulations!");
-                break;
+            *s_ref.lock().unwrap() = s;
+        }
+        let mut needed_time = false;
+        while gt.0.get(&s).map(|x| x.playouts).unwrap_or(0) <
+            (10 * <Nim as Game>::legal_moves(&s).len() as u32)
+        {
+            if needed_time {
+                print!(".");
+                io::stdout().flush()?;
+            } else {
+                print!("I need some time to consider my next move.");
+                io::stdout().flush()?;
+                needed_time = true;
             }
-            let gt = gt.read().unwrap();
-            let m = gt.best_choice(&s).ok_or("No moves available")?;
-            println!("I'll pick {}", m);
-            <Nim as Game>::apply(&mut s, *m);
-            println!("The state is now {}", s.0);
-            if <Nim as Game>::finished(&*s) {
-                println!("Looks like I won. Too bad!");
-                break;
-            }
+            thread::sleep(Duration::from_millis(1000));
+        }
+        if needed_time {
+            println!();
+        };
+        let m = gt.best_choice(&s).ok_or("No moves available")?;
+        println!("I'll pick {}", m);
+        <Nim as Game>::apply(&mut s, m);
+        println!("The state is now {}", s.0);
+        if <Nim as Game>::finished(&s) {
+            println!("Looks like I won. Too bad!");
+            break;
+        }
+        {
+            *s_ref.lock().unwrap() = s;
         }
     }
     Ok(())
