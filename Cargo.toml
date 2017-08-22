@@ -10,6 +10,7 @@ name = "game-trees"
 [dependencies]
 chashmap = "2.2.0"
 fnv = "1.0.5"
+itertools = "0.6.1"
 rand = "0.3.16"
 
 [features]

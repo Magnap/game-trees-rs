@@ -1,4 +1,5 @@
 pub mod nim;
+pub mod backgammon;
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -20,9 +21,9 @@ pub trait Game {
     type State: Eq + Hash + Clone + Sync + Send;
 
     #[cfg(feature = "debug")]
-    type Player: Eq + Hash + Sync + Send + Debug;
+    type Player: Eq + Hash + Clone + Sync + Send + Debug;
     #[cfg(not(feature = "debug"))]
-    type Player: Eq + Hash + Sync + Send;
+    type Player: Eq + Hash + Clone + Sync + Send;
 
     fn new() -> Self::State;
     fn apply(&mut Self::State, Self::Move);
