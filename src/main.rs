@@ -168,7 +168,7 @@ fn dice_turn_(mut buf: &mut String) -> BoxResult<backgammon::Roll> {
 fn move_turn(buf: &mut String, s: &<Backgammon as Game>::State) -> <Backgammon as Game>::Move {
     println!("What's your move?");
     println!("Legal moves should be");
-    for m in <Backgammon as Game>::legal_moves(&s) {
+    for m in <Backgammon as Game>::legal_moves(s) {
         println!("{}", format_sequence(&m.unwrap()))
     }
     println!("The format is (location,places moved )+");
@@ -189,10 +189,10 @@ fn move_turn_(
     buf.clear();
     io::stdin().read_line(&mut buf)?;
     let m = Ok(parse_moves(buf)?);
-    if !<Backgammon as Game>::legal_moves(&s).contains(&m) {
+    if !<Backgammon as Game>::legal_moves(s).contains(&m) {
         Err("That's not a legal move. Please try again.")?;
     }
-    return Ok(m);
+    Ok(m)
 }
 
 fn parse_moves(buf: &str) -> BoxResult<Vec<backgammon::SingleMove>> {
@@ -226,14 +226,14 @@ fn computer_turn(
     s: &mut <Backgammon as Game>::State,
 ) -> BoxResult<<Backgammon as Game>::Move> {
     let mut countdown = 5;
-    let moves = <Backgammon as Game>::legal_moves(&s).len();
+    let moves = <Backgammon as Game>::legal_moves(s).len();
     print!("Considering my next move..");
     io::stdout().flush()?;
     thread::sleep(Duration::from_millis(2000));
     while !gt.lock()
         .unwrap()
         .0
-        .get(&s)
+        .get(s)
         .map(|x| (*x).playouts)
         // constant chosen as a balance between waiting time and strength of play
         .unwrap_or(0) >= (32 * moves as u32)
@@ -250,7 +250,7 @@ fn computer_turn(
     println!();
     Ok(gt.lock()
         .unwrap()
-        .best_choice(&s)
+        .best_choice(s)
         .ok_or("No moves available")?)
 }
 

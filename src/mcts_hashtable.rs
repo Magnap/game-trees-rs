@@ -9,7 +9,7 @@ use std::f64;
 use std::cmp::Ordering;
 
 #[cfg_attr(feature = "debug", derive(Debug))]
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct Meta<G: Game + Clone> {
     pub scoreboard: ScoreBoard<G>,
     pub playouts: u32,

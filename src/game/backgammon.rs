@@ -32,10 +32,10 @@ use self::Location::*;
 
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Board(Point(n)) => write!(f, "{}", n),
-            &Bar => write!(f, "bar"),
-            &Home => write!(f, "home"),
+        match *self {
+            Board(Point(n)) => write!(f, "{}", n),
+            Bar => write!(f, "bar"),
+            Home => write!(f, "home"),
         }
     }
 }
@@ -242,7 +242,7 @@ impl Game for Backgammon {
             m.insert(Some(!p), -multiplier);
             // Dice always scoring 0 leads to them always considering all moves equally good as a player
             m.insert(None, 0.0);
-            return Some(m);
+            Some(m)
         } else {
             None
         }
@@ -258,28 +258,25 @@ fn legal_sequences(s: &State, dice: &[u8]) -> Vec<Vec<SingleMove>> {
     let mut new_dice = Vec::new();
     new_dice.extend(dice);
     let mut sequences = Vec::new();
-    match new_dice.pop() {
-        Some(roll) => {
-            let mut positions = board();
-            positions.push(Bar);
-            positions.retain(|l| any_loc(*l, s.player, s));
-            for p in positions {
-                let mut s = s.clone();
-                let m = (p, roll);
-                if legal_move(&m, &s) {
-                    <Backgammon as Game>::apply(&mut s, Ok(vec![m]));
-                    s.player = !s.player;
-                    // Recursion here is limited to depth 4
-                    // and way simpler than doing backtracking
-                    for mut ms in legal_sequences(&s, &new_dice) {
-                        ms.push(m);
-                        sequences.push(ms);
-                    }
-                    sequences.push(vec![m]);
+    if let Some(roll) = new_dice.pop() {
+        let mut positions = board();
+        positions.push(Bar);
+        positions.retain(|l| any_loc(*l, s.player, s));
+        for p in positions {
+            let mut s = s.clone();
+            let m = (p, roll);
+            if legal_move(&m, &s) {
+                <Backgammon as Game>::apply(&mut s, Ok(vec![m]));
+                s.player = !s.player;
+                // Recursion here is limited to depth 4
+                // and way simpler than doing backtracking
+                for mut ms in legal_sequences(&s, &new_dice) {
+                    ms.push(m);
+                    sequences.push(ms);
                 }
+                sequences.push(vec![m]);
             }
         }
-        None => {}
     }
     sequences
 }
@@ -294,8 +291,8 @@ fn legal_move(m: &SingleMove, s: &State) -> bool {
     } else {
         from_count.1 >= StackHeight(1)
     };
-    let all_h_w = all_homeboard(true, &s);
-    let all_h_b = all_homeboard(false, &s);
+    let all_h_w = all_homeboard(true, s);
+    let all_h_b = all_homeboard(false, s);
     let to_index = if s.player {
         (if l == Bar { 0 } else { l.into(): usize }) as i8 + n as i8
     } else {
@@ -308,7 +305,7 @@ fn legal_move(m: &SingleMove, s: &State) -> bool {
     } else {
         (to_index < 1 && all_h_b) || (to_index >= 1 && enemy_count.0 <= StackHeight(1))
     };
-    let bar_check = if any_loc(Bar, s.player, &s) {
+    let bar_check = if any_loc(Bar, s.player, s) {
         l == Bar
     } else {
         true
