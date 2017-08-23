@@ -94,6 +94,7 @@ fn run() -> BoxResult<()> {
             }
         }
         human_turn = !human_turn;
+        print_expectations(&s, &*gt);
         print_state(&s);
         gc(&gt, &s, old_state);
     }
@@ -217,32 +218,28 @@ fn computer_turn(
     gt: &Mutex<mcts_hashtable::MctsTable<Backgammon>>,
     s: &mut <Backgammon as Game>::State,
 ) -> BoxResult<<Backgammon as Game>::Move> {
-    let mut countdown = 6;
+    let mut countdown = 5;
     let moves = <Backgammon as Game>::legal_moves(&s).len();
-    while countdown > 0 {
-        if gt.lock()
-            .unwrap()
-            .0
-            .get(&s)
-            .map(|x| (*x).playouts)
-            .unwrap_or(0) >= (10 * moves as u32)
-        {
-            countdown = 0;
-        } else {
-            countdown -= 1;
-        }
+    print!("Considering my next move..");
+    io::stdout().flush()?;
+    thread::sleep(Duration::from_millis(2000));
+    while !gt.lock()
+        .unwrap()
+        .0
+        .get(&s)
+        .map(|x| (*x).playouts)
+        .unwrap_or(0) >= (32 * moves as u32)
+    {
         if countdown == 0 {
-            println!();
+            break;
         } else {
-            if countdown == 5 {
-                print!("Considering my next move.");
-            } else {
-                print!(".");
-            }
+            print!(".");
             io::stdout().flush()?;
+            countdown -= 1;
             thread::sleep(Duration::from_millis(1000));
         }
     }
+    println!();
     Ok(gt.lock()
         .unwrap()
         .best_choice(&s)
@@ -270,4 +267,16 @@ fn print_state(s: &<Backgammon as Game>::State) {
         let count = s.counts[l.into(): usize];
         println!("{}: ({}, {})", &l, count.0, count.1)
     }
+}
+
+fn print_expectations(
+    s: &<Backgammon as Game>::State,
+    gt: &Mutex<mcts_hashtable::MctsTable<Backgammon>>,
+) {
+    let meta = &gt.lock().unwrap().0[s];
+    println!(
+        "Expected score {} over {} playouts",
+        meta.scoreboard[&Some(!s.player)] / meta.playouts as f64,
+        meta.playouts
+    );
 }

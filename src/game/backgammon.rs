@@ -54,7 +54,7 @@ type Count = (StackHeight, StackHeight);
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct State {
-    player: bool,
+    pub player: bool,
     roll_turn: bool,
     pub counts: Vec<Count>,
     dice: Roll,
