@@ -27,8 +27,6 @@ fn main() {
 }
 
 fn run() -> BoxResult<()> {
-    println!("{:?}", backgammon::homeboard(true));
-    println!("{:?}", backgammon::homeboard(false));
     let mut s = <Backgammon as Game>::new();
     let gt = Arc::new(Mutex::new(
         mcts_hashtable::MctsTable::<Backgammon>::with_state(
@@ -41,6 +39,8 @@ fn run() -> BoxResult<()> {
     io::stdin().read_line(&mut buf)?;
     let mut human_turn = buf.trim() == "yes";
     let s_ref = Arc::new(Mutex::new(s.clone()));
+    // TODO change mcts_hashtable to use a concurrent hashtable,
+    // allowing for more workers
     for _ in 0..1 {
         let gt = gt.clone();
         let s_ref = s_ref.clone();
@@ -62,12 +62,15 @@ fn run() -> BoxResult<()> {
             } else {
                 thread::sleep(Duration::from_millis(10));
             }
+            // This constant depends on game state size
+            // and was chosen to remain at a reasonable level of memory use
             wait = gt.lock().unwrap().0.len() > 2usize.pow(20);
+            // TODO find a better way to ensures main thread can get the lock
+            // within a reasonable timeframe
             thread::sleep(Duration::from_millis(1));
         });
     }
-    let mut done = false;
-    while !done {
+    loop {
         let old_state = s.clone();
         let d = dice_turn(&mut buf);
         apply(d, &mut s, &s_ref);
@@ -78,7 +81,7 @@ fn run() -> BoxResult<()> {
             apply(m, &mut s, &s_ref);
             if <Backgammon as Game>::finished(&s) {
                 println!("Looks like you won. Congratulations!");
-                done = true;
+                break;
             }
         } else {
             let m = computer_turn(&*gt, &mut s)?;
@@ -101,6 +104,7 @@ fn run() -> BoxResult<()> {
     Ok(())
 }
 
+// TODO merge this into mcts_hashtable
 fn gc(
     gt: &Arc<Mutex<mcts_hashtable::MctsTable<Backgammon>>>,
     new: &<Backgammon as Game>::State,
@@ -143,6 +147,7 @@ fn dice_turn(buf: &mut String) -> <Backgammon as Game>::Move {
     }
 }
 
+// Ugly parsing
 fn dice_turn_(mut buf: &mut String) -> BoxResult<backgammon::Roll> {
     buf.clear();
     io::stdin().read_line(&mut buf)?;
@@ -176,6 +181,7 @@ fn move_turn(buf: &mut String, s: &<Backgammon as Game>::State) -> <Backgammon a
     }
 }
 
+// TODO don't require user to canonicalize
 fn move_turn_(
     mut buf: &mut String,
     s: &<Backgammon as Game>::State,
@@ -206,6 +212,7 @@ fn parse_moves(buf: &str) -> BoxResult<Vec<backgammon::SingleMove>> {
     Ok(res?)
 }
 
+// Should be the inverse of the Display impl
 fn parse_location(s: &str) -> BoxResult<backgammon::Location> {
     Ok(match s {
         "home" => Home,
@@ -228,6 +235,7 @@ fn computer_turn(
         .0
         .get(&s)
         .map(|x| (*x).playouts)
+        // constant chosen as a balance between waiting time and strength of play
         .unwrap_or(0) >= (32 * moves as u32)
     {
         if countdown == 0 {
@@ -258,6 +266,7 @@ fn format_move(m: &backgammon::SingleMove) -> String {
     format!("{},{}", l, n)
 }
 
+// TODO find a better way to format this
 fn print_state(s: &<Backgammon as Game>::State) {
     let mut b = board();
     b.push(Bar);

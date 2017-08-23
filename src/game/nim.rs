@@ -30,7 +30,7 @@ impl Game for Nim {
         (1..(min(10, 100 - s.0) + 1)).collect()
     }
 
-    fn points(s: &Self::State) -> Option<HashMap<Self::Player, Score>> {
+    fn scores(s: &Self::State) -> Option<HashMap<Self::Player, Score>> {
         if Self::finished(s) {
             let mut m = HashMap::new();
             let p = s.1;

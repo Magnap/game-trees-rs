@@ -9,6 +9,10 @@ use std::fmt::Debug;
 pub type Score = f64;
 pub type ScoreBoard<G: Game> = HashMap<G::Player, Score>;
 
+// DISCUSS have the state be `Self`
+// Will this cause problems with overlapping `impl`s?
+// unlikely: no orphan `impl`s allowed
+// Would probably make type inference better
 pub trait Game {
     #[cfg(feature = "debug")]
     type Move: Eq + Hash + Clone + Sync + Send + Debug;
@@ -30,7 +34,7 @@ pub trait Game {
     fn legal_moves(&Self::State) -> Vec<Self::Move>;
     fn players() -> Vec<Self::Player>;
     fn current_player(&Self::State) -> Self::Player;
-    fn points(&Self::State) -> Option<ScoreBoard<Self>>;
+    fn scores(&Self::State) -> Option<ScoreBoard<Self>>;
     fn finished(&Self::State) -> bool;
 }
 

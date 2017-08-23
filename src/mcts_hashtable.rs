@@ -14,6 +14,7 @@ pub struct Meta<G: Game + Clone> {
     pub scoreboard: ScoreBoard<G>,
     pub playouts: u32,
     pub moves: FnvHashMap<G::Move, (G::State, usize)>,
+    // Internal field for use in GC
     paths: usize,
 }
 
@@ -35,18 +36,15 @@ impl<G: Game + Clone> Meta<G> {
     }
 }
 
+// TODO can this be made a lazy static even though it is generic over G?
 fn all_scores_zero<G: Game>() -> ScoreBoard<G> {
     G::players().into_iter().map(|p| (p, 0.0)).collect()
 }
 
+// DISCUSS include a field for the current state?
 #[cfg_attr(feature = "debug", derive(Debug))]
+#[derive(Default)]
 pub struct MctsTable<G: Game + Clone>(pub FnvHashMap<G::State, Meta<G>>);
-
-impl<G: Game + Clone> Default for MctsTable<G> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl<G: Game + Clone> MctsTable<G> {
     pub fn new() -> Self {
@@ -63,6 +61,7 @@ impl<G: Game + Clone> MctsTable<G> {
         self.0.insert(s.clone(), Meta::with_state(s));
     }
 
+    // Most robust move
     pub fn best_choice(&self, s: &G::State) -> Option<G::Move> {
         self.0.get(s).and_then(|meta| {
             meta.moves
@@ -77,49 +76,51 @@ impl<G: Game + Clone> MctsTable<G> {
         })
     }
 
+    // move with highest upper confidence bound (UCB1)
     fn best_choice_(&self, s: &G::State) -> Option<G::Move> {
-        let moves: Vec<_> = self.0
-            .get(s)
-            .map(|meta| {
-                meta.moves
-                    .iter()
-                    .map(|(m, new)| {
-                        let weight = match self.0.get(&new.0) {
-                            None => f64::INFINITY,
-                            Some(v) => {
-                                if v.playouts == 0 {
-                                    f64::INFINITY
-                                } else {
-                                    v.scoreboard[&G::current_player(s)] / (v.playouts as f64) +
-                                        f64::sqrt(
-                                            2.0 * (meta.playouts as f64).ln() / (v.playouts as f64),
-                                        )
-                                }
-                            }
-                        };
-                        (m.clone(), weight)
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(Vec::new);
-        let bests = moves
-            .into_iter()
-            .fold((Vec::new(), f64::NEG_INFINITY), |(mut ms, mut best),
-             (m, weight)| {
-                match weight.partial_cmp(&best) {
-                    Some(Ordering::Equal) => ms.push(m),
-                    Some(Ordering::Greater) => {
-                        best = weight;
-                        ms = vec![m];
+        self.0.get(s).and_then(|meta| {
+            // Hopefully keeping `moves` as a "raw" iterator
+            // should fuse it with bests
+            // otherwise the variable should be eliminated manually
+            // TODO bench this
+            let moves = meta.moves.iter().map(|(m, new)| {
+                let weight = match self.0.get(&new.0) {
+                    None => f64::INFINITY,
+                    Some(v) => {
+                        if v.playouts == 0 {
+                            f64::INFINITY
+                        } else {
+                            v.scoreboard[&G::current_player(s)] / (v.playouts as f64) +
+                                f64::sqrt(2.0 * (meta.playouts as f64).ln() / (v.playouts as f64))
+                        }
                     }
-                    _ => {}
-                }
-                (ms, best)
-            })
-            .0;
-        thread_rng().choose(&bests).map(|m| (*m).clone())
+                };
+                (m.clone(), weight)
+            });
+            // TODO is this better or worse than finding the best score first
+            // then only retaining those with the best score?
+            let bests = moves
+                .fold((Vec::new(), f64::NEG_INFINITY), |(mut ms, mut best),
+                 (m, weight)| {
+                    match weight.partial_cmp(&best) {
+                        Some(Ordering::Equal) => ms.push(m),
+                        Some(Ordering::Greater) => {
+                            best = weight;
+                            ms = vec![m];
+                        }
+                        _ => {}
+                    }
+                    (ms, best)
+                })
+                .0;
+            // TODO is this an appropriate source of randomness
+            // for throw-away (one-time) thread-local use?
+            thread_rng().choose(&bests).map(|m| (*m).clone())
+        })
     }
 
+    // DISCUSS just return the scoreboard from each playout
+    // and eliminate this wrapper function?
     pub fn playout(&mut self, s: &G::State, max_its: u32) {
         self.playout_(s, max_its);
     }
@@ -128,13 +129,16 @@ impl<G: Game + Clone> MctsTable<G> {
         if self.0.get(s).is_none() {
             self.insert(s.clone());
         }
+        // Can't match here,
+        // there'd be an immutable borrow of s active in the Some arm
+        // preventing updating on the way back up the "tree"
         if self.0.get(s).is_some() {
-            let scores: ScoreBoard<G>;
             let best_move_opt = if max_its > 0 {
                 self.best_choice_(s)
             } else {
                 None
             };
+            let scores: ScoreBoard<G>;
             match best_move_opt {
                 Some(best_move) => {
                     let mut new = s.clone();
@@ -143,10 +147,11 @@ impl<G: Game + Clone> MctsTable<G> {
                         v.moves.get_mut(&best_move).unwrap().1 += 1;
                     }
                     G::apply(&mut new, best_move);
+                    // TODO make this iterative rather than recursive
                     scores = self.playout_(&new, max_its - 1);
                 }
                 None => {
-                    scores = G::points(s).unwrap_or_else(all_scores_zero::<G>);
+                    scores = G::scores(s).unwrap_or_else(all_scores_zero::<G>);
                 }
             }
             let mut v = self.0.get_mut(s).unwrap();
@@ -161,6 +166,11 @@ impl<G: Game + Clone> MctsTable<G> {
         }
     }
 
+    // TODO merge this with the code from main
+    // to specify a "to" and "from" state
+    // where the "from" state is deleted and its children collected
+    // except for the "to" child,
+    // because its playouts are a subset of its parent's
     pub fn garbage_collect(&mut self, s: &G::State) {
         let mut to_be_gced = vec![s.clone()];
         let mut initial = true;
@@ -168,10 +178,7 @@ impl<G: Game + Clone> MctsTable<G> {
             let curr = to_be_gced.pop().unwrap();
             let exists = self.0.get(&curr).is_some();
             if exists {
-                let old_meta: Meta<G>;
-                {
-                    old_meta = self.0[&curr].clone();
-                }
+                let old_meta = self.0[&curr].clone();
                 if old_meta.paths == 0 || initial {
                     self.0.remove(&curr);
                     for (_, (new, touches)) in old_meta.moves {
