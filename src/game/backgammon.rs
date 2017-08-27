@@ -1,9 +1,6 @@
-use game::{Game, Score};
+use game::{GameState, Score};
 use std::collections::HashMap;
 use std::fmt;
-
-#[derive(Clone)]
-pub struct Backgammon;
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Copy, Clone, Debug)]
 pub struct Point(pub u8);
@@ -58,7 +55,7 @@ impl From<Location> for usize {
 type Count = (StackHeight, StackHeight);
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
-pub struct State {
+pub struct Backgammon {
     pub player: bool,
     roll_turn: bool,
     pub counts: Vec<Count>,
@@ -68,14 +65,13 @@ pub struct State {
 // Location, amount to move by
 pub type SingleMove = (Location, u8);
 
-impl Game for Backgammon {
+impl GameState for Backgammon {
     // Result is used to make a sum type
     // deliberately "privileging" the player turns over the dice turns
     type Move = Result<Vec<SingleMove>, Roll>;
-    type State = State;
     type Player = Player;
 
-    fn new() -> Self::State {
+    fn new() -> Self {
         let mut v = Vec::new();
         for n in 0..26 {
             // This would be more elegant if locations were relative
@@ -95,7 +91,7 @@ impl Game for Backgammon {
             };
             v.push((StackHeight(white), StackHeight(black)))
         }
-        State {
+        Backgammon {
             player: true,
             roll_turn: true,
             counts: v,
@@ -103,7 +99,7 @@ impl Game for Backgammon {
         }
     }
 
-    fn apply(s: &mut Self::State, m: Self::Move) {
+    fn apply(&mut self, m: Self::Move) {
         match m {
             Ok(v) => {
                 // Assumes causally consistent ordering
@@ -112,19 +108,19 @@ impl Game for Backgammon {
                 for (l, n) in v {
                     // Non-lexical lifetimes would be nice here
                     {
-                        let from = &mut s.counts[l.into(): usize];
-                        if s.player {
+                        let from = &mut self.counts[l.into(): usize];
+                        if self.player {
                             (from.0).0 -= 1
                         } else {
                             (from.1).0 -= 1
                         };
                     }
-                    let to_index = if s.player {
+                    let to_index = if self.player {
                         (if l == Bar { 0 } else { l.into(): usize }) as i8 + n as i8
                     } else {
                         (if l == Bar { 25 } else { l.into(): usize }) as i8 - n as i8
                     };
-                    let home_p = if s.player {
+                    let home_p = if self.player {
                         to_index > 24
                     } else {
                         to_index < 1
@@ -138,18 +134,18 @@ impl Game for Backgammon {
                     let enemy_hit = if home_p {
                         false
                     } else {
-                        any_loc(to_pos, !s.player, s)
+                        self.any_loc(to_pos, !self.player)
                     };
                     // Another non-lexical lifetime
                     {
-                        let mut to = &mut s.counts[to_pos.into(): usize];
-                        if s.player {
+                        let mut to = &mut self.counts[to_pos.into(): usize];
+                        if self.player {
                             (to.0).0 += 1
                         } else {
                             (to.1).0 += 1
                         };
                         if enemy_hit {
-                            if s.player {
+                            if self.player {
                                 (to.1).0 -= 1;
                             } else {
                                 (to.0).0 -= 1;
@@ -157,20 +153,20 @@ impl Game for Backgammon {
                         }
                     }
                     if enemy_hit {
-                        let mut bar = &mut s.counts[Bar.into(): usize];
-                        if s.player {
+                        let mut bar = &mut self.counts[Bar.into(): usize];
+                        if self.player {
                             (bar.1).0 += 1;
                         } else {
                             (bar.0).0 += 1;
                         };
                     }
                 }
-                s.roll_turn = true;
-                s.player = !s.player;
+                self.roll_turn = true;
+                self.player = !self.player;
             }
             Err(pair) => {
-                s.roll_turn = false;
-                s.dice = pair;
+                self.roll_turn = false;
+                self.dice = pair;
             }
         }
     }
@@ -179,13 +175,17 @@ impl Game for Backgammon {
         vec![None, Some(false), Some(true)]
     }
 
-    fn current_player(s: &Self::State) -> Self::Player {
-        if s.roll_turn { None } else { Some(s.player) }
+    fn current_player(&self) -> Self::Player {
+        if self.roll_turn {
+            None
+        } else {
+            Some(self.player)
+        }
     }
 
-    fn legal_moves(s: &Self::State) -> Vec<Self::Move> {
+    fn legal_moves(&self) -> Vec<Self::Move> {
         let mut v = Vec::new();
-        if s.roll_turn {
+        if self.roll_turn {
             // Canonical representation of dice rolls:
             // highest die first
             for x in 1..7 {
@@ -194,14 +194,14 @@ impl Game for Backgammon {
                 }
             }
         } else {
-            let (x, y) = s.dice;
+            let (x, y) = self.dice;
             let mut mss: Vec<Vec<_>> = Vec::new();
             mss.push(Vec::new());
             if x == y {
-                mss.extend(legal_sequences(s, &[x, x, x, x]).into_iter());
+                mss.extend(self.legal_sequences(&[x, x, x, x]).into_iter());
             } else {
-                mss.extend(legal_sequences(s, &[x, y]).into_iter());
-                mss.extend(legal_sequences(s, &[y, x]).into_iter());
+                mss.extend(self.legal_sequences(&[x, y]).into_iter());
+                mss.extend(self.legal_sequences(&[y, x]).into_iter());
             }
             let max_moves = mss.iter()
                 .map(|ms| ms.iter().map(|&(_, n)| n).sum::<u8>())
@@ -224,12 +224,12 @@ impl Game for Backgammon {
         v
     }
 
-    fn scores(s: &Self::State) -> Option<HashMap<Self::Player, Score>> {
-        if Self::finished(s) {
+    fn scores(&self) -> Option<HashMap<Self::Player, Score>> {
+        if self.finished() {
             let mut m = HashMap::new();
             // The person who just finished their turn is the one who has won
-            let p = !s.player;
-            let multiplier = match (all_homeboard(!p, s), any_loc(Home, !p, s)) {
+            let p = !self.player;
+            let multiplier = match (self.all_homeboard(!p), self.any_loc(Home, !p)) {
                 // Backgammon
                 (false, false) => 3.0,
                 // Gammon
@@ -248,69 +248,91 @@ impl Game for Backgammon {
         }
     }
 
-    fn finished(s: &Self::State) -> bool {
-        all_loc(Home, false, s) || all_loc(Home, true, s)
+    fn finished(&self) -> bool {
+        self.all_loc(Home, false) || self.all_loc(Home, true)
     }
 }
 
-fn legal_sequences(s: &State, dice: &[u8]) -> Vec<Vec<SingleMove>> {
-    // Clone slice into Vec
-    let mut new_dice = Vec::new();
-    new_dice.extend(dice);
-    let mut sequences = Vec::new();
-    if let Some(roll) = new_dice.pop() {
-        let mut positions = board();
-        positions.push(Bar);
-        positions.retain(|l| any_loc(*l, s.player, s));
-        for p in positions {
-            let mut s = s.clone();
-            let m = (p, roll);
-            if legal_move(&m, &s) {
-                <Backgammon as Game>::apply(&mut s, Ok(vec![m]));
-                s.player = !s.player;
-                // Recursion here is limited to depth 4
-                // and way simpler than doing backtracking
-                for mut ms in legal_sequences(&s, &new_dice) {
-                    ms.push(m);
-                    sequences.push(ms);
+impl Backgammon {
+    fn legal_sequences(&self, dice: &[u8]) -> Vec<Vec<SingleMove>> {
+        // Clone slice into Vec
+        let mut new_dice = Vec::new();
+        new_dice.extend(dice);
+        let mut sequences = Vec::new();
+        if let Some(roll) = new_dice.pop() {
+            let mut positions = board();
+            positions.push(Bar);
+            positions.retain(|l| self.any_loc(*l, self.player));
+            for p in positions {
+                let mut s = self.clone();
+                let m = (p, roll);
+                if self.legal_move(&m) {
+                    <Backgammon as GameState>::apply(&mut s, Ok(vec![m]));
+                    s.player = !s.player;
+                    // Recursion here is limited to depth 4
+                    // and way simpler than doing backtracking
+                    for mut ms in self.legal_sequences(&new_dice) {
+                        ms.push(m);
+                        sequences.push(ms);
+                    }
+                    sequences.push(vec![m]);
                 }
-                sequences.push(vec![m]);
             }
         }
+        sequences
     }
-    sequences
-}
 
-// This duplicates some of the logic in `apply`
-// but is hopefully cheaper and simpler than having a `legal_state` function
-fn legal_move(m: &SingleMove, s: &State) -> bool {
-    let &(l, n) = m;
-    let from_count = s.counts[l.into(): usize];
-    let can_move_from = if s.player {
-        from_count.0 >= StackHeight(1)
-    } else {
-        from_count.1 >= StackHeight(1)
-    };
-    let all_h_w = all_homeboard(true, s);
-    let all_h_b = all_homeboard(false, s);
-    let to_index = if s.player {
-        (if l == Bar { 0 } else { l.into(): usize }) as i8 + n as i8
-    } else {
-        (if l == Bar { 25 } else { l.into(): usize }) as i8 - n as i8
-    };
-    let empty = (StackHeight(0), StackHeight(0));
-    let enemy_count = s.counts.get(to_index as usize).unwrap_or(&empty);
-    let can_move_to = if s.player {
-        (to_index > 24 && all_h_w) || (to_index <= 24 && enemy_count.1 <= StackHeight(1))
-    } else {
-        (to_index < 1 && all_h_b) || (to_index >= 1 && enemy_count.0 <= StackHeight(1))
-    };
-    let bar_check = if any_loc(Bar, s.player, s) {
-        l == Bar
-    } else {
-        true
-    };
-    can_move_from && can_move_to && bar_check
+    // This duplicates some of the logic in `apply`
+    // but is hopefully cheaper and simpler than having a `legal_state` function
+    fn legal_move(&self, m: &SingleMove) -> bool {
+        let &(l, n) = m;
+        let from_count = self.counts[l.into(): usize];
+        let can_move_from = if self.player {
+            from_count.0 >= StackHeight(1)
+        } else {
+            from_count.1 >= StackHeight(1)
+        };
+        let all_h_w = self.all_homeboard(true);
+        let all_h_b = self.all_homeboard(false);
+        let to_index = if self.player {
+            (if l == Bar { 0 } else { l.into(): usize }) as i8 + n as i8
+        } else {
+            (if l == Bar { 25 } else { l.into(): usize }) as i8 - n as i8
+        };
+        let empty = (StackHeight(0), StackHeight(0));
+        let enemy_count = self.counts.get(to_index as usize).unwrap_or(&empty);
+        let can_move_to = if self.player {
+            (to_index > 24 && all_h_w) || (to_index <= 24 && enemy_count.1 <= StackHeight(1))
+        } else {
+            (to_index < 1 && all_h_b) || (to_index >= 1 && enemy_count.0 <= StackHeight(1))
+        };
+        let bar_check = if self.any_loc(Bar, self.player) {
+            l == Bar
+        } else {
+            true
+        };
+        can_move_from && can_move_to && bar_check
+    }
+
+    fn all_homeboard(&self, p: bool) -> bool {
+        homeboard(p)
+            .into_iter()
+            .map(|n| {
+                let counts = self.counts[n.into(): usize];
+                if p { (counts.0).0 } else { (counts.1).0 }
+            })
+            .sum::<u8>() == 15
+    }
+
+    fn any_loc(&self, l: Location, p: bool) -> bool {
+        let counts = self.counts[l.into(): usize];
+        StackHeight(0) < if p { counts.0 } else { counts.1 }
+    }
+
+    fn all_loc(&self, l: Location, p: bool) -> bool {
+        let counts = self.counts[l.into(): usize];
+        StackHeight(15) == if p { counts.0 } else { counts.1 }
+    }
 }
 
 // DISCUSS more correct and less wasteful but less convenient to return boxed slice
@@ -335,26 +357,6 @@ pub fn homeboard(p: bool) -> Vec<Location> {
     }
     v.push(Home);
     v
-}
-
-fn all_homeboard(p: bool, s: &State) -> bool {
-    homeboard(p)
-        .into_iter()
-        .map(|n| {
-            let counts = s.counts[n.into(): usize];
-            if p { (counts.0).0 } else { (counts.1).0 }
-        })
-        .sum::<u8>() == 15
-}
-
-fn any_loc(l: Location, p: bool, s: &State) -> bool {
-    let counts = s.counts[l.into(): usize];
-    StackHeight(0) < if p { counts.0 } else { counts.1 }
-}
-
-fn all_loc(l: Location, p: bool, s: &State) -> bool {
-    let counts = s.counts[l.into(): usize];
-    StackHeight(15) == if p { counts.0 } else { counts.1 }
 }
 
 // This would be unnecessary if locations depended on player

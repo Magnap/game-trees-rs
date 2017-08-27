@@ -1,8 +1,7 @@
 extern crate rand;
 extern crate fnv;
 
-use game;
-use game::{Game, ScoreBoard};
+use game::{GameState, ScoreBoard};
 use self::fnv::FnvHashMap;
 use self::rand::{thread_rng, Rng};
 use std::f64;
@@ -10,21 +9,21 @@ use std::cmp::Ordering;
 
 #[cfg_attr(feature = "debug", derive(Debug))]
 #[derive(Default, Clone)]
-pub struct Meta<G: Game + Clone> {
+pub struct Meta<G: GameState> {
     pub scoreboard: ScoreBoard<G>,
     pub playouts: u32,
-    pub moves: FnvHashMap<G::Move, (G::State, usize)>,
+    pub moves: FnvHashMap<G::Move, (G, usize)>,
     // Internal field for use in GC
     paths: usize,
 }
 
-impl<G: Game + Clone> Meta<G> {
-    fn with_state(s: G::State) -> Self {
-        let ms = game::possible_moves::<G>(&s);
+impl<G: GameState> Meta<G> {
+    fn with_state(s: G) -> Self {
+        let ms = s.possible_moves();
         let mut table = FnvHashMap::default();
         for m in ms {
             let mut new = s.clone();
-            G::apply(&mut new, m.clone());
+            new.apply(m.clone());
             table.insert(m, (new, 0));
         }
         Meta {
@@ -37,32 +36,32 @@ impl<G: Game + Clone> Meta<G> {
 }
 
 // TODO can this be made a lazy static even though it is generic over G?
-fn all_scores_zero<G: Game>() -> ScoreBoard<G> {
+fn all_scores_zero<G: GameState>() -> ScoreBoard<G> {
     G::players().into_iter().map(|p| (p, 0.0)).collect()
 }
 
 // DISCUSS include a field for the current state?
 #[cfg_attr(feature = "debug", derive(Debug))]
 #[derive(Default)]
-pub struct MctsTable<G: Game + Clone>(pub FnvHashMap<G::State, Meta<G>>);
+pub struct MctsTable<G: GameState + Clone>(pub FnvHashMap<G, Meta<G>>);
 
-impl<G: Game + Clone> MctsTable<G> {
+impl<G: GameState> MctsTable<G> {
     pub fn new() -> Self {
         Self::with_state(G::new())
     }
 
-    pub fn with_state(s: G::State) -> Self {
+    pub fn with_state(s: G) -> Self {
         let mut table = MctsTable(FnvHashMap::default());
         table.insert(s);
         table
     }
 
-    fn insert(&mut self, s: G::State) {
+    fn insert(&mut self, s: G) {
         self.0.insert(s.clone(), Meta::with_state(s));
     }
 
     // Most robust move
-    pub fn best_choice(&self, s: &G::State) -> Option<G::Move> {
+    pub fn best_choice(&self, s: &G) -> Option<G::Move> {
         self.0.get(s).and_then(|meta| {
             meta.moves
                 .iter()
@@ -77,7 +76,7 @@ impl<G: Game + Clone> MctsTable<G> {
     }
 
     // move with highest upper confidence bound (UCB1)
-    fn best_choice_(&self, s: &G::State) -> Option<G::Move> {
+    fn best_choice_(&self, s: &G) -> Option<G::Move> {
         self.0.get(s).and_then(|meta| {
             // Hopefully keeping `moves` as a "raw" iterator
             // should fuse it with bests
@@ -90,7 +89,7 @@ impl<G: Game + Clone> MctsTable<G> {
                         if v.playouts == 0 {
                             f64::INFINITY
                         } else {
-                            v.scoreboard[&G::current_player(s)] / (v.playouts as f64) +
+                            v.scoreboard[&s.current_player()] / (v.playouts as f64) +
                                 f64::sqrt(2.0 * (meta.playouts as f64).ln() / (v.playouts as f64))
                         }
                     }
@@ -121,11 +120,11 @@ impl<G: Game + Clone> MctsTable<G> {
 
     // DISCUSS just return the scoreboard from each playout
     // and eliminate this wrapper function?
-    pub fn playout(&mut self, s: &G::State, max_its: u32) {
+    pub fn playout(&mut self, s: &G, max_its: u32) {
         self.playout_(s, max_its);
     }
 
-    fn playout_(&mut self, s: &G::State, max_its: u32) -> ScoreBoard<G> {
+    fn playout_(&mut self, s: &G, max_its: u32) -> ScoreBoard<G> {
         if self.0.get(s).is_none() {
             self.insert(s.clone());
         }
@@ -146,12 +145,12 @@ impl<G: Game + Clone> MctsTable<G> {
                         let v = self.0.get_mut(s).unwrap();
                         v.moves.get_mut(&best_move).unwrap().1 += 1;
                     }
-                    G::apply(&mut new, best_move);
+                    new.apply(best_move);
                     // TODO make this iterative rather than recursive
                     scores = self.playout_(&new, max_its - 1);
                 }
                 None => {
-                    scores = G::scores(s).unwrap_or_else(all_scores_zero::<G>);
+                    scores = s.scores().unwrap_or_else(all_scores_zero::<G>);
                 }
             }
             let mut v = self.0.get_mut(s).unwrap();
@@ -171,7 +170,7 @@ impl<G: Game + Clone> MctsTable<G> {
     // where the "from" state is deleted and its children collected
     // except for the "to" child,
     // because its playouts are a subset of its parent's
-    pub fn garbage_collect(&mut self, s: &G::State) {
+    pub fn garbage_collect(&mut self, s: &G) {
         let mut to_be_gced = vec![s.clone()];
         let mut initial = true;
         while !to_be_gced.is_empty() {

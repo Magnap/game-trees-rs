@@ -3,12 +3,12 @@
 extern crate game_trees;
 extern crate itertools;
 
-use game_trees::game::Game;
+use game_trees::game::GameState;
 use game_trees::game::backgammon;
 use backgammon::Backgammon;
 use backgammon::{Point, board};
 use backgammon::Location::*;
-use game_trees::mcts_hashtable;
+use game_trees::mcts_hashtable::MctsTable;
 
 use std::error::Error;
 use std::sync::{Arc, Mutex};
@@ -27,12 +27,8 @@ fn main() {
 }
 
 fn run() -> BoxResult<()> {
-    let mut s = <Backgammon as Game>::new();
-    let gt = Arc::new(Mutex::new(
-        mcts_hashtable::MctsTable::<Backgammon>::with_state(
-            s.clone(),
-        ),
-    ));
+    let mut s = Backgammon::new();
+    let gt = Arc::new(Mutex::new(MctsTable::<Backgammon>::with_state(s.clone())));
     println!("Let's play Backgammon. Do you want to go first? If so write \"yes\"");
     let mut buf = String::new();
     buf.clear();
@@ -79,7 +75,7 @@ fn run() -> BoxResult<()> {
         if human_turn {
             let m = move_turn(&mut buf, &s);
             apply(m, &mut s, &s_ref);
-            if <Backgammon as Game>::finished(&s) {
+            if s.finished() {
                 println!("Looks like you won. Congratulations!");
                 break;
             }
@@ -91,7 +87,7 @@ fn run() -> BoxResult<()> {
             }
             println!();
             apply(m, &mut s, &s_ref);
-            if <Backgammon as Game>::finished(&s) {
+            if s.finished() {
                 println!("Looks like I won. Too bad!");
                 break;
             }
@@ -105,11 +101,7 @@ fn run() -> BoxResult<()> {
 }
 
 // TODO merge this into mcts_hashtable
-fn gc(
-    gt: &Arc<Mutex<mcts_hashtable::MctsTable<Backgammon>>>,
-    new: &<Backgammon as Game>::State,
-    old: <Backgammon as Game>::State,
-) {
+fn gc(gt: &Arc<Mutex<MctsTable<Backgammon>>>, new: &Backgammon, old: Backgammon) {
     {
         let gt = gt.clone();
         let new = new.clone();
@@ -125,18 +117,14 @@ fn gc(
     }
 }
 
-fn apply(
-    m: <Backgammon as Game>::Move,
-    s: &mut <Backgammon as Game>::State,
-    s_ref: &Arc<Mutex<<Backgammon as Game>::State>>,
-) {
-    <Backgammon as Game>::apply(s, m);
+fn apply(m: <Backgammon as GameState>::Move, s: &mut Backgammon, s_ref: &Arc<Mutex<Backgammon>>) {
+    s.apply(m);
     {
         *s_ref.lock().unwrap() = s.clone();
     }
 }
 
-fn dice_turn(buf: &mut String) -> <Backgammon as Game>::Move {
+fn dice_turn(buf: &mut String) -> <Backgammon as GameState>::Move {
     println!("What do the dice show?");
     println!("Write the lowest number, then a space, then the highest.");
     loop {
@@ -165,10 +153,10 @@ fn dice_turn_(mut buf: &mut String) -> BoxResult<backgammon::Roll> {
     Ok((x, y))
 }
 
-fn move_turn(buf: &mut String, s: &<Backgammon as Game>::State) -> <Backgammon as Game>::Move {
+fn move_turn(buf: &mut String, s: &Backgammon) -> <Backgammon as GameState>::Move {
     println!("What's your move?");
     println!("Legal moves should be");
-    for m in <Backgammon as Game>::legal_moves(s) {
+    for m in s.legal_moves() {
         println!("{}", format_sequence(&m.unwrap()))
     }
     println!("The format is (location,places moved )+");
@@ -182,14 +170,11 @@ fn move_turn(buf: &mut String, s: &<Backgammon as Game>::State) -> <Backgammon a
 }
 
 // TODO don't require user to canonicalize
-fn move_turn_(
-    mut buf: &mut String,
-    s: &<Backgammon as Game>::State,
-) -> BoxResult<<Backgammon as Game>::Move> {
+fn move_turn_(mut buf: &mut String, s: &Backgammon) -> BoxResult<<Backgammon as GameState>::Move> {
     buf.clear();
     io::stdin().read_line(&mut buf)?;
     let m = Ok(parse_moves(buf)?);
-    if !<Backgammon as Game>::legal_moves(s).contains(&m) {
+    if !s.legal_moves().contains(&m) {
         Err("That's not a legal move. Please try again.")?;
     }
     Ok(m)
@@ -222,11 +207,11 @@ fn parse_location(s: &str) -> BoxResult<backgammon::Location> {
 }
 
 fn computer_turn(
-    gt: &Mutex<mcts_hashtable::MctsTable<Backgammon>>,
-    s: &mut <Backgammon as Game>::State,
-) -> BoxResult<<Backgammon as Game>::Move> {
+    gt: &Mutex<MctsTable<Backgammon>>,
+    s: &mut Backgammon,
+) -> BoxResult<<Backgammon as GameState>::Move> {
     let mut countdown = 5;
-    let moves = <Backgammon as Game>::legal_moves(s).len();
+    let moves = s.legal_moves().len();
     print!("Considering my next move..");
     io::stdout().flush()?;
     thread::sleep(Duration::from_millis(2000));
@@ -267,7 +252,7 @@ fn format_move(m: &backgammon::SingleMove) -> String {
 }
 
 // TODO find a better way to format this
-fn print_state(s: &<Backgammon as Game>::State) {
+fn print_state(s: &Backgammon) {
     let mut b = board();
     b.push(Bar);
     b.push(Home);
@@ -278,10 +263,7 @@ fn print_state(s: &<Backgammon as Game>::State) {
     }
 }
 
-fn print_expectations(
-    s: &<Backgammon as Game>::State,
-    gt: &Mutex<mcts_hashtable::MctsTable<Backgammon>>,
-) {
+fn print_expectations(s: &Backgammon, gt: &Mutex<MctsTable<Backgammon>>) {
     let meta = &gt.lock().unwrap().0[s];
     println!(
         "Expected score {} over {} playouts",
